@@ -60,20 +60,15 @@ final class TrashModel {
         }
     }
 
-    /// Somma `fileSize` delle risorse di ogni asset. Non è un'API pubblica
-    /// documentata: se non è disponibile si restituisce `nil` e si mostra
-    /// solo il conteggio.
+    /// Somma le dimensioni degli asset; `nil` se nessuna è disponibile, così
+    /// si mostra solo il conteggio.
     nonisolated private static func totalFileSize(of assets: [PHAsset]) -> Int64? {
-        let key = "fileSize"
         var total: Int64 = 0
         var foundAny = false
         for asset in assets {
             if Task.isCancelled { return nil }
-            for resource in PHAssetResource.assetResources(for: asset) {
-                guard resource.responds(to: NSSelectorFromString(key)),
-                      let size = (resource.value(forKey: key) as? NSNumber)?.int64Value
-                else { continue }
-                total += size
+            if let bytes = AssetFileSize.bytes(of: asset) {
+                total += bytes
                 foundAny = true
             }
         }

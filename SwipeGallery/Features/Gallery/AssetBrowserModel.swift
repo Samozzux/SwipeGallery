@@ -4,7 +4,7 @@ import Photos
 import SwipeCore
 
 /// Modalità di visualizzazione di Galleria e Album.
-enum BrowserMode: String, CaseIterable, Identifiable {
+enum BrowserMode: String, GlassSegment {
     case swipe
     case grid
 

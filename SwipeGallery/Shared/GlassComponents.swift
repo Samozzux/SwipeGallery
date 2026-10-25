@@ -1,15 +1,21 @@
 import SwiftUI
 
-/// Selettore Swipe / Griglia in Liquid Glass, con l'evidenziazione che scorre
-/// fra le due voci.
-struct ModeSwitcher: View {
-    @Binding var selection: BrowserMode
+/// Voce di un `GlassSegmentedControl`.
+protocol GlassSegment: Hashable, Identifiable, CaseIterable where AllCases: RandomAccessCollection {
+    var title: String { get }
+    var systemImage: String { get }
+}
+
+/// Selettore in Liquid Glass (Swipe / Griglia, Simili / Video pesanti), con
+/// l'evidenziazione che scorre fra le voci.
+struct GlassSegmentedControl<Option: GlassSegment>: View {
+    @Binding var selection: Option
     @Namespace private var namespace
 
     var body: some View {
         GlassEffectContainer {
             HStack(spacing: 2) {
-                ForEach(BrowserMode.allCases) { mode in
+                ForEach(Option.allCases) { mode in
                     Button {
                         withAnimation(.snappy(duration: 0.25)) {
                             selection = mode

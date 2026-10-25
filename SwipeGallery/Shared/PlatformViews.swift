@@ -60,6 +60,17 @@ enum SystemActions {
         URL(string: UIApplication.openSettingsURLString)
     }
 
+    /// Apre l'app Foto. Lo schema non è documentato ma è quello usato dal
+    /// sistema; se smettesse di funzionare il pulsante non fa nulla.
+    static var photosAppURL: URL? {
+        URL(string: "photos-redirect://")
+    }
+
+    /// Evita lo spegnimento dello schermo durante le analisi lunghe.
+    static func setKeepScreenAwake(_ awake: Bool) {
+        UIApplication.shared.isIdleTimerDisabled = awake
+    }
+
     /// Mostra il selettore di sistema per modificare la selezione con
     /// accesso limitato.
     static func presentLimitedLibraryPicker() {

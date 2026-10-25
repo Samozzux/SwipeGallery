@@ -6,6 +6,7 @@ struct TrashView: View {
     @Environment(PhotoLibraryService.self) private var library
     @Environment(DecisionStore.self) private var store
     @Environment(AppRouter.self) private var router
+    @Environment(\.openURL) private var openURL
 
     @State private var model = TrashModel()
     @State private var preview: PreviewItem?
@@ -86,13 +87,13 @@ struct TrashView: View {
                 model.reload(library: library, store: store, force: true)
             }
             .fullScreenCover(item: $preview) { item in
-                TrashPreviewView(
+                AssetPreviewView(
                     asset: item.asset,
-                    onRestore: {
+                    secondary: PreviewAction(title: "Ripristina", systemImage: "arrow.uturn.backward") {
                         store.restore([item.id])
                         preview = nil
                     },
-                    onDelete: {
+                    primary: PreviewAction(title: "Elimina definitivamente", systemImage: "trash", isDestructive: true) {
                         previewPendingDeletion = PendingDeletion(ids: [item.id])
                     }
                 )
@@ -101,14 +102,16 @@ struct TrashView: View {
                     pending: $previewPendingDeletion,
                     outcome: $previewOutcome,
                     perform: { ids in previewOutcome = await delete(ids) },
-                    onSuccessAcknowledged: { preview = nil }
+                    onSuccessAcknowledged: { preview = nil },
+                    openPhotos: openPhotosApp
                 )
             }
             .deletionAlerts(
                 pending: $pendingDeletion,
                 outcome: $outcome,
                 perform: { ids in outcome = await delete(ids) },
-                onSuccessAcknowledged: {}
+                onSuccessAcknowledged: {},
+                openPhotos: openPhotosApp
             )
             .confirmationDialog(
                 "Ripristinare \(Formatters.items(model.assets.count))?",
@@ -227,6 +230,12 @@ struct TrashView: View {
         .padding(.bottom, 8)
     }
 
+    private func openPhotosApp() {
+        if let url = SystemActions.photosAppURL {
+            openURL(url)
+        }
+    }
+
     private func orderedSelection() -> [String] {
         model.allIDs.filter { model.selection.contains($0) }
     }
@@ -286,7 +295,8 @@ private extension View {
         pending: Binding<PendingDeletion?>,
         outcome: Binding<DeletionOutcome?>,
         perform: @escaping @MainActor ([String]) async -> Void,
-        onSuccessAcknowledged: @escaping @MainActor () -> Void
+        onSuccessAcknowledged: @escaping @MainActor () -> Void,
+        openPhotos: @escaping @MainActor () -> Void
     ) -> some View {
         alert(
             pending.wrappedValue.map { $0.ids.count == 1 ? "Eliminare 1 elemento dalla libreria?" : "Eliminare \(Formatters.number($0.ids.count)) elementi dalla libreria?" } ?? "",
@@ -311,6 +321,12 @@ private extension View {
             ),
             presenting: outcome.wrappedValue
         ) { result in
+            if case .success = result {
+                Button("Apri Foto") {
+                    onSuccessAcknowledged()
+                    openPhotos()
+                }
+            }
             Button("OK", role: .cancel) {
                 if case .success = result {
                     onSuccessAcknowledged()
@@ -319,7 +335,7 @@ private extension View {
         } message: { result in
             switch result {
             case .success:
-                Text("Gli elementi sono in Eliminati di recente nell'app Foto per 30 giorni. Svuotalo lì per liberare spazio subito.")
+                Text("Gli elementi sono in Eliminati di recente nell'app Foto per 30 giorni. Per liberare spazio subito: Foto → Album → Eliminati di recente → Seleziona → Elimina tutto.")
             case let .failure(message):
                 Text(message)
             }

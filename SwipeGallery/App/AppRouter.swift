@@ -3,6 +3,7 @@ import Observation
 enum AppTab: Hashable {
     case gallery
     case albums
+    case cleanup
     case trash
 }
 

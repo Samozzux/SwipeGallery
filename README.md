@@ -36,18 +36,20 @@ Serve un computer (Windows o Mac) con [Sideloadly](https://sideloadly.io) e iTun
 - **Galleria**: parte dall'elemento più recente non ancora valutato. Swipe a sinistra = cestino, a destra = tieni (invertibile nelle Impostazioni). I pulsanti in basso fanno lo stesso; **Annulla** ripristina fino alle ultime 20 azioni.
 - **Griglia**: dal selettore in alto. Tocca una miniatura per far partire lo swipe da lì verso le più recenti o le più vecchie (include anche gli elementi già tenuti).
 - **Album**: stesso funzionamento, limitato all'album. Le decisioni valgono ovunque e il cestino elimina dall'intera libreria.
-- **Cestino**: nulla viene toccato finché non premi **Svuota cestino**; iOS chiede una conferma di sistema.
+- **Pulizia → Simili**: analizza le foto sul telefono (Vision, senza rete) e raggruppa doppioni e scatti simili. In ogni gruppo l'app propone la foto da tenere; le altre vanno nel cestino dell'app. La prima analisi richiede qualche minuto, le successive elaborano solo le foto nuove. La sensibilità si cambia dal menu in alto.
+- **Pulizia → Video pesanti**: tutti i video dal più grande, con il totale; scorri una riga per mandarla nel cestino o tenerla.
+- **Cestino**: nulla viene toccato finché non premi **Svuota cestino**; iOS chiede una conferma di sistema. Gli elementi finiscono in *Eliminati di recente* dell'app Foto: iOS non permette alle app di svuotare quell'album, va fatto da Foto (*Album → Eliminati di recente → Seleziona → Elimina tutto*).
 - Video: partono muti in loop, tocca per l'audio. Live Photo: tieni premuto per riprodurle. Pinch per lo zoom sulle foto.
 
 ## Sviluppo
 
 ```text
-SwipeCore/            logica pura (coda, annulla, filtri, soglie del gesto), senza PhotoKit
+SwipeCore/            logica pura (coda, annulla, filtri, gesto, raggruppamento foto simili), senza PhotoKit
 SwipeCoreTests/       unit test della logica (Swift Testing)
 SwipeGallery/
   App/                entry point, radice e tab
   Services/           PhotoKit, caricamento immagini, decisioni (SwiftData), album
-  Features/           Gallery, Swipe, Grid, Albums, Trash, Settings, Onboarding
+  Features/           Gallery, Swipe, Grid, Albums, Cleanup, Trash, Settings, Onboarding
   Shared/             componenti Liquid Glass, miniature, media, formattatori
 project.yml           definizione del progetto per XcodeGen
 .github/workflows/    build su GitHub Actions

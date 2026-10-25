@@ -14,6 +14,9 @@ struct RootTabView: View {
             Tab("Album", systemImage: "rectangle.stack", value: AppTab.albums) {
                 AlbumsView()
             }
+            Tab("Pulizia", systemImage: "sparkles", value: AppTab.cleanup) {
+                CleanupView()
+            }
             Tab("Cestino", systemImage: "trash", value: AppTab.trash) {
                 TrashView()
             }

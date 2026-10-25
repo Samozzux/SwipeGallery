@@ -51,7 +51,7 @@ struct AssetBrowserView: View {
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .principal) {
-            ModeSwitcher(selection: $model.mode)
+            GlassSegmentedControl(selection: $model.mode)
         }
         .sharedBackgroundVisibility(.hidden)
 
