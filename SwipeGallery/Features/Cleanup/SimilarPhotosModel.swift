@@ -73,7 +73,7 @@ final class SimilarPhotosModel {
             self.items = items
             analyzedCount = items.count
             analyzedChangeCount = changeCount
-            regroup(library: library, sensitivity: sensitivity)
+            startGrouping(library: library, sensitivity: sensitivity)
         }
     }
 
@@ -81,12 +81,24 @@ final class SimilarPhotosModel {
         cancellation?.cancel()
     }
 
-    /// Rifà i gruppi dalle impronte già calcolate.
+    /// Rifà i gruppi dalle impronte già calcolate (cambio di sensibilità).
     func regroup(library: PhotoLibraryService, sensitivity: SimilaritySensitivity) {
         guard !isAnalyzing, !items.isEmpty else { return }
+        startGrouping(library: library, sensitivity: sensitivity)
+    }
+
+    /// Raggruppa le impronte in memoria. Viene chiamata anche alla fine
+    /// dell'analisi, quando lo stato è ancora `.analyzing`: per questo non
+    /// controlla `isAnalyzing`.
+    private func startGrouping(library: PhotoLibraryService, sensitivity: SimilaritySensitivity) {
         groupTask?.cancel()
-        phase = .grouping
         let items = items
+        guard !items.isEmpty else {
+            groups = []
+            phase = .ready
+            return
+        }
+        phase = .grouping
         let options = SimilarityOptions.preset(sensitivity)
         groupTask = Task {
             let indexGroups = await Task.detached(priority: .userInitiated) {
