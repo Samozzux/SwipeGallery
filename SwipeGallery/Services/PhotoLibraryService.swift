@@ -168,7 +168,15 @@ final class PhotoLibraryService: NSObject, PHPhotoLibraryChangeObserver {
     /// la propria conferma di sistema.
     func deleteAssets(withIDs ids: [String]) async throws {
         guard !ids.isEmpty else { return }
-        try await PHPhotoLibrary.shared().performChanges {
+        try await Self.performDeletion(of: ids)
+    }
+
+    /// Fuori dal MainActor di proposito. PhotoKit dichiara il blocco di
+    /// modifiche come `dispatch_block_t` non `Sendable`: scritto dentro un
+    /// metodo `@MainActor` diventerebbe isolato al main thread, e PhotoKit lo
+    /// esegue su una sua coda, cosa che in Swift 6 termina l'app.
+    nonisolated private static func performDeletion(of ids: [String]) async throws {
+        try await PHPhotoLibrary.shared().performChanges { @Sendable in
             let assets = PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil)
             PHAssetChangeRequest.deleteAssets(assets)
         }
