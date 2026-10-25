@@ -1,0 +1,15 @@
+# Progetto generato da XcodeGen
+*.xcodeproj
+*.xcworkspace
+
+# Prodotti di build
+build/
+DerivedData/
+Payload/
+*.ipa
+.build/
+.swiftpm/
+
+# File di sistema
+.DS_Store
+xcuserdata/

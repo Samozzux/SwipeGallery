@@ -1,0 +1,103 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Test e IPA non firmato
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Seleziona Xcode 26
+        run: |
+          XCODE_APP=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | grep -vi beta | sort -V | tail -n 1)
+          if [ -z "$XCODE_APP" ]; then
+            XCODE_APP=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -n 1)
+          fi
+          echo "Uso $XCODE_APP"
+          sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+          xcodebuild -version
+
+      - name: Installa XcodeGen
+        run: brew install xcodegen
+
+      - name: Genera il progetto
+        run: xcodegen generate
+
+      - name: Scegli il simulatore
+        id: simulator
+        run: |
+          UDID=$(xcrun simctl list devices available --json | python3 scripts/pick-simulator.py)
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+
+      - name: Unit test
+        run: |
+          mkdir -p build
+          if ! xcodebuild test \
+            -project SwipeGallery.xcodeproj \
+            -scheme SwipeGallery \
+            -destination "id=${{ steps.simulator.outputs.udid }}" \
+            -derivedDataPath build/test \
+            -resultBundlePath build/TestResults.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            > build/test.log 2>&1; then
+            grep -E "error:|✘|failed" build/test.log | head -n 100 || true
+            tail -n 80 build/test.log
+            exit 1
+          fi
+          grep -E "✔ Suite|Test run|\*\* TEST" build/test.log | tail -n 20 || true
+
+      - name: Build Release per dispositivo (senza firma)
+        run: |
+          mkdir -p build
+          if ! xcodebuild \
+            -project SwipeGallery.xcodeproj \
+            -scheme SwipeGallery \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build > build/build.log 2>&1; then
+            grep -E "error:" build/build.log | head -n 100 || true
+            tail -n 80 build/build.log
+            exit 1
+          fi
+          grep -E "warning: |\*\* BUILD" build/build.log | sort -u | tail -n 40 || true
+
+      - name: Crea SwipeGallery.ipa
+        run: |
+          rm -rf Payload SwipeGallery.ipa
+          mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/SwipeGallery.app Payload/
+          zip -qr SwipeGallery.ipa Payload
+          ls -lh SwipeGallery.ipa
+
+      - name: Pubblica l'IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: SwipeGallery-ipa
+          path: SwipeGallery.ipa
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Pubblica i log in caso di errore
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            build/*.log
+            build/TestResults.xcresult
+          retention-days: 7
+          if-no-files-found: ignore
