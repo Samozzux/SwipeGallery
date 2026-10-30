@@ -59,16 +59,22 @@ struct AssetPreviewView: View {
             .padding(.top, 8)
         }
         .overlay(alignment: .bottom) {
-            GlassEffectContainer(spacing: 12) {
-                HStack(spacing: 12) {
-                    button(for: secondary)
-                        .buttonStyle(.glass)
-                    button(for: primary)
-                        .buttonStyle(.glassProminent)
-                        .tint(primary.isDestructive ? .red : .accentColor)
+            VStack(spacing: 12) {
+                if kind == .video {
+                    VideoControlBar(video: video)
+                        .padding(.horizontal, 16)
                 }
-                .font(.body.weight(.semibold))
-                .controlSize(.large)
+                GlassEffectContainer(spacing: 12) {
+                    HStack(spacing: 12) {
+                        button(for: secondary)
+                            .buttonStyle(.glass)
+                        button(for: primary)
+                            .buttonStyle(.glassProminent)
+                            .tint(primary.isDestructive ? .red : .accentColor)
+                    }
+                    .font(.body.weight(.semibold))
+                    .controlSize(.large)
+                }
             }
             .padding(.bottom, 12)
         }

@@ -21,9 +21,12 @@ final class ImageLoader {
     private var cachedDeckAssets: [PHAsset] = []
     private var cachedDeckSize: CGSize = .zero
     private var videoRequests: [String: VideoRequest] = [:]
-    /// Video precaricati non ancora usati, dal più vecchio.
-    private var preparedVideos: [(id: String, item: AVPlayerItem)] = []
-    private static let maxPreparedVideos = 2
+    /// Player precaricati (in pausa) non ancora usati, dal più vecchio.
+    private var preparedVideos: [(id: String, player: AVPlayer)] = []
+    /// Video successivi da preparare in anticipo.
+    private static let maxPrefetchedVideos = 2
+    /// Player pronti tenuti da parte: i successivi più quello della card corrente.
+    private static let maxPreparedVideos = maxPrefetchedVideos + 1
 
     private init() {}
 
@@ -160,12 +163,12 @@ final class ImageLoader {
 
     /// Avvia (o riusa) il caricamento di un video. Chi chiede lo stesso video
     /// mentre è in arrivo si aggancia alla stessa richiesta; un video già
-    /// precaricato viene consegnato subito.
+    /// precaricato viene consegnato subito, con il player già pronto.
     func loadVideo(_ asset: PHAsset, handler: @escaping @MainActor (VideoLoadEvent) -> Void) -> VideoLoadToken {
         let id = asset.localIdentifier
         let token = VideoLoadToken(assetID: id, id: UUID())
         if let index = preparedVideos.firstIndex(where: { $0.id == id }) {
-            handler(.ready(preparedVideos.remove(at: index).item))
+            handler(.ready(preparedVideos.remove(at: index).player))
             return token
         }
         if var request = videoRequests[id] {
@@ -184,19 +187,33 @@ final class ImageLoader {
         return token
     }
 
-    /// Prepara il video della prossima card, così parte appena arriva in cima.
-    func prefetchVideo(_ asset: PHAsset) {
-        let id = asset.localIdentifier
-        guard videoRequests[id] == nil, !preparedVideos.contains(where: { $0.id == id }) else { return }
-        // Un precaricamento alla volta: quelli che nessuno aspetta più si annullano.
-        for (otherID, request) in videoRequests where request.waiters.isEmpty {
-            manager.cancelImageRequest(request.requestID)
-            videoRequests[otherID] = nil
+    /// Prepara i prossimi video della coda: per ognuno crea un player in pausa
+    /// che intanto scarica i primi secondi, così il video parte appena la card
+    /// arriva in cima. Quelli non più in coda vengono scartati; quello della
+    /// card corrente resta finché la card non lo prende.
+    func prefetchVideos(_ upcoming: [PHAsset], current: PHAsset?) {
+        let wanted = Array(upcoming.prefix(Self.maxPrefetchedVideos))
+        var keptIDs = Set(wanted.map(\.localIdentifier))
+        if let current {
+            keptIDs.insert(current.localIdentifier)
         }
-        var request = VideoRequest()
-        request.isPrefetch = true
-        videoRequests[id] = request
-        startVideoRequest(for: asset)
+        for (id, request) in videoRequests where request.waiters.isEmpty && !keptIDs.contains(id) {
+            manager.cancelImageRequest(request.requestID)
+            videoRequests[id] = nil
+        }
+        preparedVideos.removeAll { entry in
+            guard !keptIDs.contains(entry.id) else { return false }
+            entry.player.replaceCurrentItem(with: nil)
+            return true
+        }
+        for asset in wanted {
+            let id = asset.localIdentifier
+            guard videoRequests[id] == nil, !preparedVideos.contains(where: { $0.id == id }) else { continue }
+            var request = VideoRequest()
+            request.isPrefetch = true
+            videoRequests[id] = request
+            startVideoRequest(for: asset)
+        }
     }
 
     func cancelVideoLoad(_ token: VideoLoadToken) {
@@ -252,18 +269,22 @@ final class ImageLoader {
             return
         }
         if request.waiters.isEmpty {
-            preparedVideos.append((id: id, item: item))
+            // Un player con l'item agganciato carica e bufferizza anche in
+            // pausa: quando servirà, parte senza attese.
+            let player = AVPlayer(playerItem: item)
+            player.isMuted = true
+            preparedVideos.append((id: id, player: player))
             if preparedVideos.count > Self.maxPreparedVideos {
-                preparedVideos.removeFirst()
+                preparedVideos.removeFirst().player.replaceCurrentItem(with: nil)
             }
             return
         }
         // Un AVPlayerItem può stare in un solo player: gli altri ricevono una copia.
         for (offset, waiter) in request.waiters.values.enumerated() {
             if offset == 0 {
-                waiter(.ready(item))
+                waiter(.ready(AVPlayer(playerItem: item)))
             } else if let copy = item.copy() as? AVPlayerItem {
-                waiter(.ready(copy))
+                waiter(.ready(AVPlayer(playerItem: copy)))
             }
         }
     }
@@ -273,7 +294,7 @@ final class ImageLoader {
 enum VideoLoadEvent {
     /// Avanzamento del download da iCloud, da 0 a 1.
     case progress(Double)
-    case ready(AVPlayerItem)
+    case ready(AVPlayer)
     case failed
 }
 

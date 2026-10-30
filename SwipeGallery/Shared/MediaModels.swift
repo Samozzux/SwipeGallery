@@ -61,7 +61,9 @@ final class AssetImageModel {
     }
 }
 
-/// Riproduzione in loop di un video, senza audio finché l'utente non tocca.
+/// Riproduzione in loop di un video, senza audio finché l'utente non tocca,
+/// con play/pausa e scorrimento. Lo stesso modello può servire più card: ogni
+/// card ferma solo il video che ha avviato lei.
 @MainActor
 @Observable
 final class VideoPlaybackModel {
@@ -74,27 +76,116 @@ final class VideoPlaybackModel {
     /// La riproduzione è ferma in attesa di dati.
     private(set) var isBuffering = false
     private(set) var didFail = false
+    /// Messo in pausa dall'utente: il video non riparte da solo.
+    private(set) var isPaused = false
+    /// Secondi trascorsi e durata, per la barra di avanzamento.
+    private(set) var currentTime: Double = 0
+    private(set) var duration: Double = 0
+    private(set) var isScrubbing = false
+
+    /// Il video caricato (o in caricamento).
+    private(set) var loadedID: String?
 
     @ObservationIgnored private var token: VideoLoadToken?
-    @ObservationIgnored private var loadedID: String?
     @ObservationIgnored private var statusObservation: NSKeyValueObservation?
     @ObservationIgnored private var endObserver: (any NSObjectProtocol)?
+    @ObservationIgnored private var timeObserver: Any?
+    @ObservationIgnored private var wasPlayingBeforeScrub = false
+    @ObservationIgnored private var seekTarget: Double?
+    @ObservationIgnored private var isSeeking = false
 
     func start(_ asset: PHAsset) {
         guard loadedID != asset.localIdentifier else {
-            player?.play()
+            if !isPaused, !isScrubbing {
+                player?.play()
+            }
             return
         }
-        stop()
+        reset()
         let id = asset.localIdentifier
         loadedID = id
+        duration = asset.duration
         isLoading = true
         token = ImageLoader.shared.loadVideo(asset) { [weak self] event in
             self?.handle(event, for: id)
         }
     }
 
-    func stop() {
+    /// Ferma il video solo se è quello indicato: una card che scompare non
+    /// deve interrompere il video della card successiva.
+    func stop(_ assetID: String) {
+        guard loadedID == assetID else { return }
+        reset()
+    }
+
+    func toggleMute() {
+        isMuted.toggle()
+        player?.isMuted = isMuted
+        AudioSession.setPlaybackAudible(!isMuted)
+    }
+
+    func togglePlayPause() {
+        guard let player else { return }
+        isPaused.toggle()
+        if isPaused {
+            player.pause()
+        } else {
+            if duration > 0, currentTime >= duration - 0.05 {
+                player.seek(to: .zero)
+            }
+            player.play()
+        }
+    }
+
+    // MARK: - Scorrimento
+
+    func beginScrubbing() {
+        guard let player, !isScrubbing else { return }
+        isScrubbing = true
+        wasPlayingBeforeScrub = !isPaused
+        player.pause()
+    }
+
+    /// Sposta il video mentre si trascina. Le richieste si accodano: parte
+    /// sempre e solo l'ultima posizione, così il trascinamento resta fluido.
+    func scrub(to seconds: Double) {
+        currentTime = min(max(seconds, 0), duration)
+        seekTarget = currentTime
+        if !isSeeking {
+            performPendingSeek()
+        }
+    }
+
+    func endScrubbing() {
+        guard isScrubbing else { return }
+        isScrubbing = false
+        if wasPlayingBeforeScrub {
+            player?.play()
+        }
+    }
+
+    private func performPendingSeek() {
+        guard let player, let target = seekTarget else { return }
+        seekTarget = nil
+        isSeeking = true
+        let time = CMTime(seconds: target, preferredTimescale: 600)
+        player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { @Sendable [weak self] _ in
+            Task { @MainActor in
+                self?.seekFinished()
+            }
+        }
+    }
+
+    private func seekFinished() {
+        isSeeking = false
+        if seekTarget != nil {
+            performPendingSeek()
+        }
+    }
+
+    // MARK: - Caricamento e riproduzione
+
+    private func reset() {
         if let token {
             ImageLoader.shared.cancelVideoLoad(token)
         }
@@ -105,6 +196,10 @@ final class VideoPlaybackModel {
             NotificationCenter.default.removeObserver(endObserver)
         }
         endObserver = nil
+        if let timeObserver {
+            player?.removeTimeObserver(timeObserver)
+        }
+        timeObserver = nil
         player?.pause()
         player = nil
         loadedID = nil
@@ -112,16 +207,16 @@ final class VideoPlaybackModel {
         isBuffering = false
         downloadProgress = nil
         didFail = false
+        isPaused = false
+        isScrubbing = false
+        currentTime = 0
+        duration = 0
+        seekTarget = nil
+        isSeeking = false
         if !isMuted {
             isMuted = true
             AudioSession.setPlaybackAudible(false)
         }
-    }
-
-    func toggleMute() {
-        isMuted.toggle()
-        player?.isMuted = isMuted
-        AudioSession.setPlaybackAudible(!isMuted)
     }
 
     private func handle(_ event: VideoLoadEvent, for id: String) {
@@ -129,11 +224,11 @@ final class VideoPlaybackModel {
         switch event {
         case let .progress(value):
             downloadProgress = value < 1 ? value : nil
-        case let .ready(item):
+        case let .ready(player):
             token = nil
             isLoading = false
             downloadProgress = nil
-            play(item)
+            play(player)
         case .failed:
             token = nil
             isLoading = false
@@ -142,11 +237,10 @@ final class VideoPlaybackModel {
         }
     }
 
-    private func play(_ item: AVPlayerItem) {
+    private func play(_ player: AVPlayer) {
         // Anche un video muto attiva la sessione audio: con la categoria
         // ambient non interrompe la musica in riproduzione.
         AudioSession.setPlaybackAudible(!isMuted)
-        let player = AVPlayer(playerItem: item)
         player.isMuted = isMuted
         // Il loop riavvolge lo stesso item: nulla da riscaricare a ogni giro.
         player.actionAtItemEnd = .none
@@ -154,11 +248,11 @@ final class VideoPlaybackModel {
         // possono essere chiamate fuori dal main thread.
         endObserver = NotificationCenter.default.addObserver(
             forName: AVPlayerItem.didPlayToEndTimeNotification,
-            object: item,
+            object: player.currentItem,
             queue: .main
         ) { @Sendable [weak self] _ in
             Task { @MainActor in
-                self?.restartFromBeginning()
+                self?.reachedEnd()
             }
         }
         statusObservation = player.observe(\.timeControlStatus, options: [.initial, .new]) { @Sendable [weak self] _, change in
@@ -167,12 +261,29 @@ final class VideoPlaybackModel {
                 self?.isBuffering = waiting
             }
         }
+        timeObserver = player.addPeriodicTimeObserver(
+            forInterval: CMTime(value: 1, timescale: 20),
+            queue: .main
+        ) { @Sendable [weak self] time in
+            let seconds = time.seconds
+            Task { @MainActor in
+                self?.timeChanged(seconds)
+            }
+        }
         self.player = player
         player.play()
     }
 
-    private func restartFromBeginning() {
-        guard let player else { return }
+    private func timeChanged(_ seconds: Double) {
+        guard !isScrubbing, seconds.isFinite else { return }
+        currentTime = seconds
+        if let itemDuration = player?.currentItem?.duration.seconds, itemDuration.isFinite, itemDuration > 0 {
+            duration = itemDuration
+        }
+    }
+
+    private func reachedEnd() {
+        guard let player, !isPaused, !isScrubbing else { return }
         player.seek(to: .zero)
         player.play()
     }

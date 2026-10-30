@@ -22,6 +22,9 @@ struct SwipeDeckView: View {
     @State private var insertionEdge: SwipeEdge = .left
     @State private var feedback = FeedbackEvent.none
     @State private var showAlbumWarning = false
+    /// Un solo modello video per la pila: la card in cima lo usa e la barra
+    /// sotto la card lo controlla.
+    @State private var video = VideoPlaybackModel()
 
     private let threshold = SwipeThreshold()
 
@@ -51,11 +54,11 @@ struct SwipeDeckView: View {
                 }
             }
             .padding(.horizontal, 12)
-            .padding(.bottom, 4)
-        }
-        .overlay(alignment: .bottom) {
-            actionBar
-                .padding(.bottom, 14)
+            .overlay(alignment: .bottom) {
+                actionBar
+                    .padding(.bottom, 14)
+            }
+            videoControls
         }
         .onAppear {
             deck.isVisible = true
@@ -124,7 +127,8 @@ struct SwipeDeckView: View {
                 isTop: isTop,
                 position: "\(Formatters.number(card.item.index + 1)) / \(Formatters.number(deck.totalCount))",
                 targetSize: pixelSize(cardSize),
-                zoom: isTop ? zoom : ZoomState()
+                zoom: isTop ? zoom : ZoomState(),
+                video: video
             )
             .overlay {
                 if isTop {
@@ -289,6 +293,26 @@ struct SwipeDeckView: View {
         }
         feedback = feedback.next(.undo)
     }
+
+    // MARK: - Controlli video
+
+    /// Sotto la card, fuori dall'immagine. Lo spazio è sempre riservato: così
+    /// la card non cambia altezza (e non ricarica le immagini) passando da una
+    /// foto a un video.
+    private var videoControls: some View {
+        ZStack {
+            if let current = deck.current, AssetKind(current.asset) == .video {
+                VideoControlBar(video: video)
+                    .opacity(dragOffset == 0 ? 1 : 0)
+                    .animation(.easeOut(duration: 0.15), value: dragOffset == 0)
+            }
+        }
+        .frame(height: Self.videoControlsHeight)
+        .padding(.horizontal, 12)
+        .padding(.bottom, 6)
+    }
+
+    private static let videoControlsHeight: CGFloat = 46
 
     // MARK: - Barra dei pulsanti
 

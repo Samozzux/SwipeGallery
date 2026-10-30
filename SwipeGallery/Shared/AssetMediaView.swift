@@ -16,6 +16,12 @@ struct AssetMediaView: View {
 
     private var kind: AssetKind { AssetKind(asset) }
 
+    /// Il modello video sta riproducendo proprio questo elemento (lo stesso
+    /// modello può passare da una card all'altra).
+    private var ownsVideo: Bool {
+        isActive && kind == .video && video.loadedID == asset.localIdentifier
+    }
+
     var body: some View {
         ZStack {
             if let image = imageModel.image {
@@ -31,15 +37,15 @@ struct AssetMediaView: View {
                 LivePhotoSurface(livePhoto: livePhoto)
             }
 
-            if isActive, kind == .video, let player = video.player {
+            if ownsVideo, let player = video.player {
                 PlayerSurface(player: player)
             }
 
             if kind == .video {
-                if isActive {
+                if ownsVideo {
                     if let progress = video.downloadProgress {
                         DownloadProgressBadge(progress: progress)
-                    } else if video.isLoading || video.isBuffering {
+                    } else if video.isLoading || (video.isBuffering && !video.isPaused && !video.isScrubbing) {
                         VideoLoadingBadge()
                     }
                 }
@@ -47,7 +53,7 @@ struct AssetMediaView: View {
                 DownloadProgressBadge(progress: progress)
             }
 
-            if imageModel.didFail || (isActive && video.didFail) {
+            if imageModel.didFail || (ownsVideo && video.didFail) {
                 VStack {
                     Spacer()
                     Label(
@@ -75,7 +81,7 @@ struct AssetMediaView: View {
         .onDisappear {
             imageModel.cancel()
             live.cancel()
-            video.stop()
+            video.stop(asset.localIdentifier)
         }
     }
 
@@ -90,7 +96,7 @@ struct AssetMediaView: View {
             if isActive {
                 video.start(asset)
             } else {
-                video.stop()
+                video.stop(asset.localIdentifier)
             }
         case .livePhoto:
             if isActive {

@@ -39,7 +39,7 @@ Serve un computer (Windows o Mac) con [Sideloadly](https://sideloadly.io) e iTun
 - **Pulizia → Simili**: analizza le foto sul telefono (Vision, senza rete) e raggruppa doppioni e scatti simili. In ogni gruppo l'app propone la foto da tenere; le altre vanno nel cestino dell'app. La prima analisi richiede qualche minuto, le successive elaborano solo le foto nuove. La sensibilità si cambia dal menu in alto.
 - **Pulizia → Video pesanti**: tutti i video dal più grande, con il totale; scorri una riga per mandarla nel cestino o tenerla.
 - **Cestino**: nulla viene toccato finché non premi **Svuota cestino**; iOS chiede una conferma di sistema. Gli elementi finiscono in *Eliminati di recente* dell'app Foto: iOS non permette alle app di svuotare quell'album, va fatto da Foto (*Album → Eliminati di recente → Seleziona → Elimina tutto*).
-- Video: partono muti in loop, tocca per l'audio. Live Photo: tieni premuto per riprodurle. Pinch per lo zoom sulle foto.
+- Video: partono muti in loop; sotto la card ci sono play/pausa, la barra di avanzamento da trascinare e l'audio (anche toccando il video). I prossimi video vengono preparati in anticipo. Live Photo: tieni premuto per riprodurle. Pinch per lo zoom sulle foto.
 
 ## Sviluppo
 

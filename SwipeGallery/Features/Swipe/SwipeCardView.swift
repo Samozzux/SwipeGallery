@@ -11,16 +11,16 @@ struct ZoomState: Equatable {
     var isZoomed: Bool { scale > 1.01 }
 }
 
-/// Una card a schermo intero: contenuto, info sovrapposte e controllo audio
-/// per i video.
+/// Una card a schermo intero: contenuto e info sovrapposte. I controlli del
+/// video stanno sotto la card, nella pila.
 struct SwipeCardView: View {
     let card: DeckCard
     let isTop: Bool
     let position: String
     let targetSize: CGSize
     let zoom: ZoomState
-
-    @State private var video = VideoPlaybackModel()
+    /// Modello video condiviso dalla pila: solo la card in cima lo usa.
+    let video: VideoPlaybackModel
 
     private var kind: AssetKind { AssetKind(card.asset) }
 
@@ -57,20 +57,9 @@ struct SwipeCardView: View {
                 }
             }
             Spacer(minLength: 12)
-            VStack(alignment: .trailing, spacing: 8) {
-                GlassChip {
-                    Text(position)
-                        .monospacedDigit()
-                }
-                if kind == .video {
-                    GlassCircleButton(
-                        title: video.isMuted ? "Attiva audio" : "Disattiva audio",
-                        systemImage: video.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
-                        size: 40
-                    ) {
-                        video.toggleMute()
-                    }
-                }
+            GlassChip {
+                Text(position)
+                    .monospacedDigit()
             }
         }
         .padding(12)
