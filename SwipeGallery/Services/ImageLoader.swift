@@ -20,6 +20,10 @@ final class ImageLoader {
     private let manager = PHCachingImageManager()
     private var cachedDeckAssets: [PHAsset] = []
     private var cachedDeckSize: CGSize = .zero
+    private var videoRequests: [String: VideoRequest] = [:]
+    /// Video precaricati non ancora usati, dal più vecchio.
+    private var preparedVideos: [(id: String, item: AVPlayerItem)] = []
+    private static let maxPreparedVideos = 2
 
     private init() {}
 
@@ -128,7 +132,7 @@ final class ImageLoader {
         return result.value
     }
 
-    // MARK: - Live Photo e video
+    // MARK: - Live Photo
 
     @discardableResult
     func requestLivePhoto(
@@ -152,21 +156,143 @@ final class ImageLoader {
         }
     }
 
-    @discardableResult
-    func requestPlayerItem(
-        for asset: PHAsset,
-        handler: @escaping @MainActor @Sendable (AVPlayerItem?) -> Void
-    ) -> PHImageRequestID {
+    // MARK: - Video
+
+    /// Avvia (o riusa) il caricamento di un video. Chi chiede lo stesso video
+    /// mentre è in arrivo si aggancia alla stessa richiesta; un video già
+    /// precaricato viene consegnato subito.
+    func loadVideo(_ asset: PHAsset, handler: @escaping @MainActor (VideoLoadEvent) -> Void) -> VideoLoadToken {
+        let id = asset.localIdentifier
+        let token = VideoLoadToken(assetID: id, id: UUID())
+        if let index = preparedVideos.firstIndex(where: { $0.id == id }) {
+            handler(.ready(preparedVideos.remove(at: index).item))
+            return token
+        }
+        if var request = videoRequests[id] {
+            request.waiters[token.id] = handler
+            request.isPrefetch = false
+            videoRequests[id] = request
+            if let progress = request.progress {
+                handler(.progress(progress))
+            }
+            return token
+        }
+        var request = VideoRequest()
+        request.waiters[token.id] = handler
+        videoRequests[id] = request
+        startVideoRequest(for: asset)
+        return token
+    }
+
+    /// Prepara il video della prossima card, così parte appena arriva in cima.
+    func prefetchVideo(_ asset: PHAsset) {
+        let id = asset.localIdentifier
+        guard videoRequests[id] == nil, !preparedVideos.contains(where: { $0.id == id }) else { return }
+        // Un precaricamento alla volta: quelli che nessuno aspetta più si annullano.
+        for (otherID, request) in videoRequests where request.waiters.isEmpty {
+            manager.cancelImageRequest(request.requestID)
+            videoRequests[otherID] = nil
+        }
+        var request = VideoRequest()
+        request.isPrefetch = true
+        videoRequests[id] = request
+        startVideoRequest(for: asset)
+    }
+
+    func cancelVideoLoad(_ token: VideoLoadToken) {
+        guard var request = videoRequests[token.assetID] else { return }
+        request.waiters[token.id] = nil
+        if request.waiters.isEmpty, !request.isPrefetch {
+            manager.cancelImageRequest(request.requestID)
+            videoRequests[token.assetID] = nil
+        } else {
+            videoRequests[token.assetID] = request
+        }
+    }
+
+    private func startVideoRequest(for asset: PHAsset) {
+        let id = asset.localIdentifier
+        guard let key = videoRequests[id]?.key else { return }
         let options = PHVideoRequestOptions()
-        options.deliveryMode = .automatic
+        // Qualità media: se l'originale è già sul telefono Foto usa quello,
+        // altrimenti scarica da iCloud una versione leggera che parte subito
+        // e non si interrompe, invece dell'originale in 4K.
+        options.deliveryMode = .mediumQualityFormat
         options.isNetworkAccessAllowed = true
-        return manager.requestPlayerItem(forVideo: asset, options: options) { @Sendable item, _ in
+        options.progressHandler = { @Sendable progress, _, _, _ in
+            Task { @MainActor in
+                ImageLoader.shared.videoProgress(progress, for: id, key: key)
+            }
+        }
+        let requestID = manager.requestPlayerItem(forVideo: asset, options: options) { @Sendable item, _ in
             let box = UncheckedSendable(item)
             Task { @MainActor in
-                handler(box.value)
+                ImageLoader.shared.videoFinished(box.value, for: id, key: key)
+            }
+        }
+        videoRequests[id]?.requestID = requestID
+    }
+
+    private func videoProgress(_ progress: Double, for id: String, key: UUID) {
+        guard var request = videoRequests[id], request.key == key else { return }
+        request.progress = progress
+        videoRequests[id] = request
+        for waiter in request.waiters.values {
+            waiter(.progress(progress))
+        }
+    }
+
+    private func videoFinished(_ item: AVPlayerItem?, for id: String, key: UUID) {
+        guard let request = videoRequests[id], request.key == key else { return }
+        videoRequests[id] = nil
+        guard let item else {
+            for waiter in request.waiters.values {
+                waiter(.failed)
+            }
+            return
+        }
+        if request.waiters.isEmpty {
+            preparedVideos.append((id: id, item: item))
+            if preparedVideos.count > Self.maxPreparedVideos {
+                preparedVideos.removeFirst()
+            }
+            return
+        }
+        // Un AVPlayerItem può stare in un solo player: gli altri ricevono una copia.
+        for (offset, waiter) in request.waiters.values.enumerated() {
+            if offset == 0 {
+                waiter(.ready(item))
+            } else if let copy = item.copy() as? AVPlayerItem {
+                waiter(.ready(copy))
             }
         }
     }
+}
+
+/// Evento di caricamento di un video.
+enum VideoLoadEvent {
+    /// Avanzamento del download da iCloud, da 0 a 1.
+    case progress(Double)
+    case ready(AVPlayerItem)
+    case failed
+}
+
+/// Identifica chi aspetta un video, per poter rinunciare.
+struct VideoLoadToken: Hashable {
+    let assetID: String
+    let id: UUID
+}
+
+/// Richiesta video in corso, condivisa fra chi la aspetta.
+private struct VideoRequest {
+    /// Distingue questa richiesta da una precedente annullata per lo stesso video.
+    let key = UUID()
+    var requestID: PHImageRequestID = PHInvalidImageRequestID
+    var waiters: [UUID: @MainActor (VideoLoadEvent) -> Void] = [:]
+    var progress: Double?
+    /// Avviata dal precaricamento e ancora non richiesta da nessuno: il
+    /// risultato viene tenuto da parte invece di essere scartato.
+    var isPrefetch = false
 }
 
 /// Stato di una richiesta di miniatura: garantisce che la continuation venga

@@ -35,19 +35,30 @@ struct AssetMediaView: View {
                 PlayerSurface(player: player)
             }
 
-            if let progress = imageModel.downloadProgress {
+            if kind == .video {
+                if isActive {
+                    if let progress = video.downloadProgress {
+                        DownloadProgressBadge(progress: progress)
+                    } else if video.isLoading || video.isBuffering {
+                        VideoLoadingBadge()
+                    }
+                }
+            } else if let progress = imageModel.downloadProgress {
                 DownloadProgressBadge(progress: progress)
             }
 
-            if imageModel.didFail {
+            if imageModel.didFail || (isActive && video.didFail) {
                 VStack {
                     Spacer()
-                    Label("Originale non disponibile da iCloud", systemImage: "exclamationmark.icloud")
-                        .font(.footnote.weight(.medium))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .glassEffect(.regular, in: .capsule)
-                        .padding(.bottom, 110)
+                    Label(
+                        kind == .video ? "Video non disponibile da iCloud" : "Originale non disponibile da iCloud",
+                        systemImage: "exclamationmark.icloud"
+                    )
+                    .font(.footnote.weight(.medium))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .glassEffect(.regular, in: .capsule)
+                    .padding(.bottom, 110)
                 }
             }
         }
@@ -87,6 +98,30 @@ struct AssetMediaView: View {
             }
         case .photo, .screenshot:
             break
+        }
+    }
+}
+
+/// Caricamento o buffering di un video. Compare con un attimo di ritardo, così
+/// non lampeggia per i video che partono subito.
+struct VideoLoadingBadge: View {
+    @State private var isVisible = false
+
+    var body: some View {
+        Label {
+            Text("Caricamento video…")
+        } icon: {
+            ProgressView()
+        }
+        .font(.footnote.weight(.medium))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .glassEffect(.regular, in: .capsule)
+        .opacity(isVisible ? 1 : 0)
+        .animation(.easeIn(duration: 0.2), value: isVisible)
+        .task {
+            try? await Task.sleep(for: .milliseconds(400))
+            isVisible = true
         }
     }
 }

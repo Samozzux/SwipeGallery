@@ -233,6 +233,10 @@ final class SwipeDeckModel {
         let upcoming = queue.upcoming(Self.preloadCount + 1, isExcluded: isExcluded).dropFirst()
         let assets = upcoming.compactMap { resolveAsset($0) }
         ImageLoader.shared.updateDeckCache(Array(assets), targetSize: imageTargetSize)
+        // Se la prossima card è un video, lo si prepara mentre si guarda questa.
+        if let next = assets.first, next.mediaType == .video {
+            ImageLoader.shared.prefetchVideo(next)
+        }
     }
 
     // MARK: - Conteggio

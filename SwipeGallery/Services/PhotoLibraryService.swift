@@ -28,6 +28,7 @@ final class PhotoLibraryService: NSObject, PHPhotoLibraryChangeObserver {
     /// quali elementi vengono eliminati dalla libreria.
     @ObservationIgnored private var trackingFetch: PHFetchResult<PHAsset>?
     @ObservationIgnored private var isObserving = false
+    @ObservationIgnored private var pendingChangeNotification: Task<Void, Never>?
 
     var hasAccess: Bool {
         authorization == .authorized || authorization == .limited
@@ -203,6 +204,32 @@ final class PhotoLibraryService: NSObject, PHPhotoLibraryChangeObserver {
         if status != authorization {
             authorization = status
         }
-        refetch()
+        guard let details = change.changeDetails(for: allAssets) else { return }
+        allAssets = details.fetchResultAfterChanges
+        // Le modifiche al solo contenuto (download da iCloud, preferiti,
+        // metadati) arrivano a raffica mentre si guarda un video: non cambiano
+        // quali elementi ci sono né il loro ordine, quindi code, griglie e
+        // album non vanno rigenerati.
+        if Self.changesMembership(details) {
+            scheduleChangeNotification()
+        }
+    }
+
+    nonisolated private static func changesMembership(_ details: PHFetchResultChangeDetails<PHAsset>) -> Bool {
+        guard details.hasIncrementalChanges else { return true }
+        return !(details.removedIndexes?.isEmpty ?? true)
+            || !(details.insertedIndexes?.isEmpty ?? true)
+            || details.hasMoves
+    }
+
+    /// Raggruppa in un solo aggiornamento i cambiamenti ravvicinati: la
+    /// sincronizzazione con iCloud ne produce molti di seguito.
+    private func scheduleChangeNotification() {
+        guard pendingChangeNotification == nil else { return }
+        pendingChangeNotification = Task {
+            try? await Task.sleep(for: .milliseconds(500))
+            pendingChangeNotification = nil
+            changeCount += 1
+        }
     }
 }

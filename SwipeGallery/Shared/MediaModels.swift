@@ -65,13 +65,20 @@ final class AssetImageModel {
 @MainActor
 @Observable
 final class VideoPlaybackModel {
-    private(set) var player: AVQueuePlayer?
+    private(set) var player: AVPlayer?
     private(set) var isMuted = true
+    /// Il video sta arrivando da PhotoKit (eventualmente da iCloud).
     private(set) var isLoading = false
+    /// Avanzamento del download da iCloud; `nil` se non è in corso.
+    private(set) var downloadProgress: Double?
+    /// La riproduzione è ferma in attesa di dati.
+    private(set) var isBuffering = false
+    private(set) var didFail = false
 
-    @ObservationIgnored private var looper: AVPlayerLooper?
-    @ObservationIgnored private var requestID: PHImageRequestID?
+    @ObservationIgnored private var token: VideoLoadToken?
     @ObservationIgnored private var loadedID: String?
+    @ObservationIgnored private var statusObservation: NSKeyValueObservation?
+    @ObservationIgnored private var endObserver: (any NSObjectProtocol)?
 
     func start(_ asset: PHAsset) {
         guard loadedID != asset.localIdentifier else {
@@ -79,24 +86,32 @@ final class VideoPlaybackModel {
             return
         }
         stop()
-        loadedID = asset.localIdentifier
+        let id = asset.localIdentifier
+        loadedID = id
         isLoading = true
-        requestID = ImageLoader.shared.requestPlayerItem(for: asset) { [weak self] item in
-            self?.didLoad(item, for: asset.localIdentifier)
+        token = ImageLoader.shared.loadVideo(asset) { [weak self] event in
+            self?.handle(event, for: id)
         }
     }
 
     func stop() {
-        if let requestID {
-            ImageLoader.shared.cancel(requestID)
+        if let token {
+            ImageLoader.shared.cancelVideoLoad(token)
         }
-        requestID = nil
+        token = nil
+        statusObservation?.invalidate()
+        statusObservation = nil
+        if let endObserver {
+            NotificationCenter.default.removeObserver(endObserver)
+        }
+        endObserver = nil
         player?.pause()
-        looper?.disableLooping()
-        looper = nil
         player = nil
         loadedID = nil
         isLoading = false
+        isBuffering = false
+        downloadProgress = nil
+        didFail = false
         if !isMuted {
             isMuted = true
             AudioSession.setPlaybackAudible(false)
@@ -109,18 +124,56 @@ final class VideoPlaybackModel {
         AudioSession.setPlaybackAudible(!isMuted)
     }
 
-    private func didLoad(_ item: AVPlayerItem?, for id: String) {
+    private func handle(_ event: VideoLoadEvent, for id: String) {
         guard loadedID == id else { return }
-        requestID = nil
-        isLoading = false
-        guard let item else { return }
+        switch event {
+        case let .progress(value):
+            downloadProgress = value < 1 ? value : nil
+        case let .ready(item):
+            token = nil
+            isLoading = false
+            downloadProgress = nil
+            play(item)
+        case .failed:
+            token = nil
+            isLoading = false
+            downloadProgress = nil
+            didFail = true
+        }
+    }
+
+    private func play(_ item: AVPlayerItem) {
         // Anche un video muto attiva la sessione audio: con la categoria
         // ambient non interrompe la musica in riproduzione.
         AudioSession.setPlaybackAudible(!isMuted)
-        let player = AVQueuePlayer()
+        let player = AVPlayer(playerItem: item)
         player.isMuted = isMuted
-        looper = AVPlayerLooper(player: player, templateItem: item)
+        // Il loop riavvolge lo stesso item: nulla da riscaricare a ogni giro.
+        player.actionAtItemEnd = .none
+        // Le closure passate ad AVFoundation sono esplicitamente @Sendable:
+        // possono essere chiamate fuori dal main thread.
+        endObserver = NotificationCenter.default.addObserver(
+            forName: AVPlayerItem.didPlayToEndTimeNotification,
+            object: item,
+            queue: .main
+        ) { @Sendable [weak self] _ in
+            Task { @MainActor in
+                self?.restartFromBeginning()
+            }
+        }
+        statusObservation = player.observe(\.timeControlStatus, options: [.initial, .new]) { @Sendable [weak self] _, change in
+            let waiting = change.newValue == .waitingToPlayAtSpecifiedRate
+            Task { @MainActor in
+                self?.isBuffering = waiting
+            }
+        }
         self.player = player
+        player.play()
+    }
+
+    private func restartFromBeginning() {
+        guard let player else { return }
+        player.seek(to: .zero)
         player.play()
     }
 }
@@ -159,7 +212,13 @@ final class LivePhotoModel {
 /// l'utente attiva l'audio si passa alla riproduzione vera e propria.
 @MainActor
 enum AudioSession {
+    /// Stato attuale: riconfigurare la sessione è un'operazione lenta, si
+    /// evita di ripeterla a ogni video.
+    private static var isAudible: Bool?
+
     static func setPlaybackAudible(_ audible: Bool) {
+        guard isAudible != audible else { return }
+        isAudible = audible
         let session = AVAudioSession.sharedInstance()
         if audible {
             try? session.setCategory(.playback, mode: .moviePlayback)
